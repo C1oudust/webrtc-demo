@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>webRTC测试</title>
+    <style>
+      .sel {
+        display: flex;
+        flex-direction: column;
+      }
+      .sel select {
+        width: 400px;
+      }
+      video {
+        width: 500px;
+        object-fit: contain;
+      }
+      ul {
+        list-style: none;
+        padding: 0;
+      }
+      ul li {
+        margin-top: 10px;
+      }
+      .room {
+        display: flex;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="sel">
+      <label for="audioIn">audioIn</label>
+      <select name="audioIn" id="audioIn" onchange="mediaChange()"></select>
+
+      <label for="audioOut">audioOut</label>
+      <select name="audioOut" id="audioOut" onchange="mediaChange()"></select>
+
+      <label for="videoIn">videoIn</label>
+      <select name="videoIn" id="videoIn" onchange="mediaChange()"></select>
+    </div>
+    <div class="room">
+      <ul id="ul"></ul>
+      <video id="video1" autoplay controls muted></video>
+      <video id="video2" autoplay controls muted></video>
+    </div>
+    <script src="https://cdn.socket.io/4.4.1/socket.io.min.js" integrity="sha384-fKnu0iswBIqkjxrhQCTZ7qlLHOFEgNkRmK2vaO/LbTZSXdJfAu6ewRBdwHPhBo/H" crossorigin="anonymous"></script>
+    <script>
+      /**
+       * device list init
+       */
+      let localDevice = {
+        audioIn: [],
+        audioOut: [],
+        videoIn: [],
+      };
+      var userInfo, roomUserList = [], linkSocket, localRtcPc, channel;
+      const ul = document.getElementById('ul');
+      function initInnerLocalDevice() {
+        const self = this;
+        // 约束
+        let constraints = {
+          video: true,
+          audio: true,
+        };
+        if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+          console.log('浏览器不支持获取媒体设备');
+          return;
+        }
+        // 这里先调用getUserMedia，初次调用会向用户申请获取媒体权限
+        // 用户同意后，enumerateDevices才能获取到所有的媒体设备
+        navigator.mediaDevices
+          .getUserMedia(constraints)
+          .then((stream) => {
+            // 清除当前标签页中没有销毁的媒体流
+            stream.getTracks().forEach((trick) => {
+              trick.stop();
+            });
+            // 分类摄像头和麦克风信息
+            navigator.mediaDevices
+              .enumerateDevices()
+              .then((devices) => {
+                devices.forEach((device) => {
+                  let obj = { id: device.deviceId, kind: device.kind, label: device.label };
+                  if (device.kind === 'audioinput') {
+                    if (localDevice.audioIn.filter((e) => e.id === device.deviceId).length === 0) {
+                      localDevice.audioIn.push(obj);
+                    }
+                  } else if (device.kind === 'audiooutput') {
+                    if (localDevice.audioOut.filter((e) => e.id === device.deviceId).length === 0) {
+                      localDevice.audioOut.push(obj);
+                    }
+                  } else if (device.kind === 'videoinput') {
+                    if (localDevice.videoIn.filter((e) => e.id === device.deviceId).length === 0) {
+                      localDevice.videoIn.push(obj);
+                    }
+                  }
+                });
+                console.log(localDevice);
+                initSelector();
+              })
+              .catch(() => {
+                alert('error');
+              });
+          })
+          .catch(() => {
+            alert('error');
+          });
+      }
+      function initSelector() {
+        const audioInEl = document.querySelector('#audioIn');
+        const audioOutEl = document.querySelector('#audioOut');
+        const videoInEl = document.querySelector('#videoIn');
+        localDevice.audioIn.forEach((item) => {
+          const opt = document.createElement('option');
+          opt.value = item.id;
+          opt.innerText = item.label;
+          audioInEl.appendChild(opt);
+        });
+        localDevice.audioOut.forEach((item) => {
+          const opt = document.createElement('option');
+          opt.value = item.id;
+          opt.innerText = item.label;
+          audioOutEl.appendChild(opt);
+        });
+        localDevice.videoIn.forEach((item) => {
+          const opt = document.createElement('option');
+          opt.value = item.id;
+          opt.innerText = item.label;
+          videoInEl.appendChild(opt);
+        });
+      }
+
+      async function getCurrentStream() {
+        let audioInId = document.querySelector('#audioIn').value;
+        let audioOutId = document.querySelector('#audioOut').value;
+        let videoInId = document.querySelector('#videoIn').value;
+        let newStream = await getTargetIdStream(videoInId, audioInId);
+        const video = document.querySelector('#video');
+        video.srcObject = newStream;
+        video.muted = true;
+        return newStream;
+      }
+
+      function mediaChange(){
+        // 切换
+        //获取发送到远端的具体媒体信息的发送方信息
+        // const senders = localRtcPc.getSenders();
+        // console.log(senders);
+        // const send = senders.find((s) => s.track.kind === 'video'); //找到视频发送方信息
+        // send.track.enabled = !send.track.enabled; //控制视频显示与否 即仅音频模式
+
+        // //我这里web端因此只获取屏幕分享流 APP端则获取前置后置摄像头流即可
+        // let stream = await getShareMedia();
+        // const [videoTrack] = stream.getVideoTracks();
+        // send.replaceTrack(videoTrack); //替换视频媒体信息
+      }
+      
+      
+      // 获取指定媒体设备id对应的媒体流
+      async function getTargetIdStream(videoId, audioId) {
+        const constraints = {
+          audio: { deviceId: audioId ? { exact: audioId } : undefined },
+          video: {
+            deviceId: videoId ? { exact: videoId } : undefined,
+            width: { min: 320, ideal: 1280, max: 1920 },
+            height: { min: 240, ideal: 720, max: 1080 },
+            frameRate: { ideal: 10, max: 15 },
+            // facingMode: "user"  //移动端可选择摄像头位置 "user" 前置摄像头  { exact: "environment" }  后置
+          },
+        };
+        if (window.stream) {
+          window.stream.getTracks().forEach((track) => {
+            track.stop();
+          });
+        }
+        let stream = await navigator.mediaDevices.getUserMedia(constraints);
+        return stream;
+      }
+
+      // 获取屏幕分享的媒体流
+      async function getDisplayMedia() {
+        const constraints = {
+          video: { width: 1920, height: 1080 },
+          audio: false,
+        };
+        if (window.stream) {
+          window.stream.getTracks().forEach((track) => {
+            track.stop();
+          });
+        }
+        return await navigator.mediaDevices
+          .getDisplayMedia(constraints)
+          .catch();
+      }
+
+      function onPcEvent(pc, localUid, remoteUid) {
+        channel = pc.createDataChannel('chat', {
+          protocol: 'json',
+          ordered: true,
+        });
+        pc.ontrack = function (event) {
+          let video = document.getElementById('video2');
+          let stream = video.srcObject;
+          if (stream) {
+            stream.addTrack(event.track);
+          } else {
+            let newStream = new MediaStream();
+            newStream.addTrack(event.track);
+            video.srcObject = newStream;
+            video.muted = true;
+          }
+        };
+        pc.onnegotiationneeded = function (e) {
+          console.log('重新协商', e);
+        };
+        pc.ondatachannel = function (ev) {
+          console.log('Data channel is created!');
+          ev.channel.onopen = function () {
+            console.log('Data channel ------------open----------------');
+          };
+          ev.channel.onmessage = function (data) {
+            console.log('Data channel ------------msg----------------', data);
+          };
+          ev.channel.onclose = function () {
+            console.log('Data channel ------------close----------------');
+          };
+        };
+        pc.onicecandidate = (event) => {
+          if (event.candidate) {
+            linkSocket.emit('candidate', { targetUid: remoteUid, userId: localUid, candidate: event.candidate });
+          } else {
+            /* 在此次协商中，没有更多的候选了 */
+            console.log('在此次协商中，没有更多的候选了');
+          }
+        };
+      }
+
+      async function setDomVideoStream(newStream) {
+        let video = document.getElementById('video1');
+        let stream = video.srcObject;
+        if (stream) {
+          stream.getAudioTracks().forEach((e) => {
+            stream.removeTrack(e);
+          });
+          stream.getVideoTracks().forEach((e) => {
+            stream.removeTrack(e);
+          });
+        }
+        video.srcObject = newStream;
+        video.muted = true;
+      }
+      async function initCallerInfo(callerId, calleeId) {
+        //初始化pc
+        var PeerConnection = window.RTCPeerConnection || window.mozRTCPeerConnection || window.webkitRTCPeerConnection;
+        localRtcPc = new PeerConnection();
+        //获取本地媒体并添加到pc中
+        let localStream = await getDisplayMedia()
+        // let localStream = await getCurrentStream();
+        for (const track of localStream.getTracks()) {
+          localRtcPc.addTrack(track);
+        }
+        //本地dom渲染
+        await setDomVideoStream(localStream);
+        //回调监听
+        onPcEvent(localRtcPc, callerId, calleeId);
+        //创建offer
+        let offer = await localRtcPc.createOffer();
+        //设置offer未本地描述
+        await localRtcPc.setLocalDescription(offer);
+        //发送offer给被呼叫端
+        let params = { targetUid: calleeId, userId: callerId, offer: offer };
+        linkSocket.emit('offer', params);
+      }
+
+      function getParams(queryName) {
+        let url = window.location.href;
+        let query = decodeURI(url.split('?')[1]);
+        let vars = query.split('&');
+        for (var i = 0; i < vars.length; i++) {
+          var pair = vars[i].split('=');
+          if (pair[0] === queryName) {
+            return pair[1];
+          }
+        }
+        return null;
+      }
+      async function initCalleeInfo(localUid, fromUid) {
+        //初始化pc
+        var PeerConnection = window.RTCPeerConnection || window.mozRTCPeerConnection || window.webkitRTCPeerConnection;
+        localRtcPc = new PeerConnection();
+        //初始化本地媒体信息
+        let localStream = await await window.navigator.mediaDevices.getUserMedia({ audio: true, video: true }).catch(handleError);
+        for (const track of localStream.getTracks()) {
+          localRtcPc.addTrack(track);
+        }
+        //dom渲染
+        await setDomVideoStream(localStream);
+        //监听
+        onPcEvent(localRtcPc, localUid, fromUid);
+      }
+      async function onCall(e) {
+        console.log('远程呼叫：', e);
+        await initCalleeInfo(e.data['targetUid'], e.data['userId']);
+      }
+      async function onRemoteOffer(fromUid, offer) {
+        //B接受到A的offer 设置为remote desc
+        localRtcPc.setRemoteDescription(offer);
+        //创建应答
+        let answer = await localRtcPc.createAnswer();
+        //设置为local desc
+        await localRtcPc.setLocalDescription(answer);
+        //并通过信令服务器发送给A
+        let params = { targetUid: fromUid, userId: getParams('userId'), answer: answer };
+        linkSocket.emit('answer', params);
+      }
+      async function onRemoteAnswer(fromUid, answer) {
+        await localRtcPc.setRemoteDescription(answer);
+      }
+      function call(userId) {
+        initCallerInfo(getParams('userId'), userId);
+        let params = {
+          userId: getParams('userId'),
+          targetUid: userId,
+        };
+        linkSocket.emit('call', params);
+      }
+      function init(userId, roomId, nickname) {
+        userInfo = {
+          userId: userId,
+          roomId: roomId,
+          nickname: nickname,
+        };
+        linkSocket = window.io('ws://127.0.0.1:18080', {
+          reconnectionDelayMax: 10000,
+          transports: ['websocket'],
+          query: {
+            userId: userId,
+            roomId: roomId,
+            nickname: nickname,
+          },
+        });
+        linkSocket.on('connect', (e) => {
+          console.log('server init connect success', linkSocket);
+        });
+        linkSocket.on('roomUserList', (e) => {
+          console.log('roomUserList', roomUserList);
+          // roomUserList = e;
+          roomUserList.forEach((user) => {
+            let li = document.createElement('li');
+            let span = document.createElement('span');
+            span.innerText = user.nickname;
+            let btn = document.createElement('button');
+            btn.type = 'button';
+            btn.innerText = '通话';
+            btn.onclick = call.bind(window,user.userId);
+            li.appendChild(span);
+            li.appendChild(btn);
+            ul.appendChild(li);
+          });
+        });
+        linkSocket.on('msg', async (e) => {
+          console.log('msg', e);
+          if (e['type'] === 'join' || e['type'] === 'leave') {
+            setTimeout(() => {
+              // let params = { roomId: getParams('roomId') };
+              roomUserList.push({
+                nickname:e.data,
+                userId:e.data
+              })
+              // console.log(e)
+              linkSocket.emit('roomUserList', roomUserList);
+            }, 1000);
+          }
+          if (e['type'] === 'call') {
+            await onCall(e);
+          }
+          if (e['type'] === 'offer') {
+            await onRemoteOffer(e['data']['userId'], e['data']['offer']);
+          }
+          if (e['type'] === 'answer') {
+            await onRemoteAnswer(e['data']['userId'], e['data']['answer']);
+          }
+          if (e['type'] === 'candidate') {
+            localRtcPc.addIceCandidate(e.data.candidate);
+          }
+        });
+        linkSocket.on('error', (e) => {
+          console.log('error', e);
+        });
+      }
+
+      window.onload = () => {
+        initInnerLocalDevice();
+        if (getParams('userId')) {
+          init(getParams('userId'), getParams('roomId'), getParams('userId'));
+        }
+      };
+    </script>
+  </body>
+</html>
