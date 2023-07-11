@@ -55,7 +55,11 @@
         audioOut: [],
         videoIn: [],
       };
-      var userInfo, roomUserList = [], linkSocket, localRtcPc, channel;
+      var userInfo,
+        roomUserList = [],
+        linkSocket,
+        localRtcPc,
+        channel;
       const ul = document.getElementById('ul');
       function initInnerLocalDevice() {
         const self = this;
@@ -143,21 +147,19 @@
         return newStream;
       }
 
-      function mediaChange(){
+      function mediaChange() {
         // 切换
         //获取发送到远端的具体媒体信息的发送方信息
         // const senders = localRtcPc.getSenders();
         // console.log(senders);
         // const send = senders.find((s) => s.track.kind === 'video'); //找到视频发送方信息
         // send.track.enabled = !send.track.enabled; //控制视频显示与否 即仅音频模式
-
         // //我这里web端因此只获取屏幕分享流 APP端则获取前置后置摄像头流即可
         // let stream = await getShareMedia();
         // const [videoTrack] = stream.getVideoTracks();
         // send.replaceTrack(videoTrack); //替换视频媒体信息
       }
-      
-      
+
       // 获取指定媒体设备id对应的媒体流
       async function getTargetIdStream(videoId, audioId) {
         const constraints = {
@@ -190,9 +192,7 @@
             track.stop();
           });
         }
-        return await navigator.mediaDevices
-          .getDisplayMedia(constraints)
-          .catch();
+        return await navigator.mediaDevices.getDisplayMedia(constraints).catch();
       }
 
       function onPcEvent(pc, localUid, remoteUid) {
@@ -256,7 +256,7 @@
         var PeerConnection = window.RTCPeerConnection || window.mozRTCPeerConnection || window.webkitRTCPeerConnection;
         localRtcPc = new PeerConnection();
         //获取本地媒体并添加到pc中
-        let localStream = await getDisplayMedia()
+        let localStream = await getDisplayMedia();
         // let localStream = await getCurrentStream();
         for (const track of localStream.getTracks()) {
           localRtcPc.addTrack(track);
@@ -291,7 +291,7 @@
         var PeerConnection = window.RTCPeerConnection || window.mozRTCPeerConnection || window.webkitRTCPeerConnection;
         localRtcPc = new PeerConnection();
         //初始化本地媒体信息
-        let localStream = await await window.navigator.mediaDevices.getUserMedia({ audio: true, video: true }).catch(handleError);
+        let localStream = await window.navigator.mediaDevices.getUserMedia({ audio: true, video: true }).catch();
         for (const track of localStream.getTracks()) {
           localRtcPc.addTrack(track);
         }
@@ -336,41 +336,39 @@
           reconnectionDelayMax: 10000,
           transports: ['websocket'],
           query: {
-            userId: userId,
-            roomId: roomId,
-            nickname: nickname,
+            userId,
+            roomId,
+            nickname,
           },
         });
         linkSocket.on('connect', (e) => {
-          console.log('server init connect success', linkSocket);
+          console.log('server init connect success');
         });
-        linkSocket.on('roomUserList', (e) => {
+        linkSocket.on('roomUserList', (roomUserList) => {
           console.log('roomUserList', roomUserList);
-          // roomUserList = e;
+          let list = document.createDocumentFragment();
           roomUserList.forEach((user) => {
-            let li = document.createElement('li');
-            let span = document.createElement('span');
-            span.innerText = user.nickname;
-            let btn = document.createElement('button');
-            btn.type = 'button';
-            btn.innerText = '通话';
-            btn.onclick = call.bind(window,user.userId);
-            li.appendChild(span);
-            li.appendChild(btn);
-            ul.appendChild(li);
+            if (user != getParams('userId')) {
+              let li = document.createElement('li');
+              let span = document.createElement('span');
+              span.innerText = user;
+              let btn = document.createElement('button');
+              btn.type = 'button';
+              btn.innerText = '通话';
+              btn.onclick = call.bind(window, user);
+              li.appendChild(span);
+              li.appendChild(btn);
+              list.appendChild(li);
+            }
           });
+          ul.replaceChildren(list);
         });
         linkSocket.on('msg', async (e) => {
           console.log('msg', e);
           if (e['type'] === 'join' || e['type'] === 'leave') {
             setTimeout(() => {
-              // let params = { roomId: getParams('roomId') };
-              roomUserList.push({
-                nickname:e.data,
-                userId:e.data
-              })
-              // console.log(e)
-              linkSocket.emit('roomUserList', roomUserList);
+              let params = { roomId: getParams('roomId') };
+              linkSocket.emit('roomUserList', params);
             }, 1000);
           }
           if (e['type'] === 'call') {

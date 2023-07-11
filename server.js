@@ -1,9 +1,9 @@
 const server = require('http').createServer();
 const io = require('socket.io')(server);
 
-const userMap = new Map(); // user - > socket
+const userMap = new Map(); // user - >  socket 保存用户socket
 const roomKey = 'meeting-room::';
-const rooms = new Map(); // rooms => Set() set存储当前room下的userId
+const rooms = new Map(); // rooms => Set() 保存当前room下的userId
 io.on('connection', async (socket) => {
   await onListener(socket);
 });
@@ -16,33 +16,11 @@ function getMsg(type, msg, status = 200, data = null) {
   return { type: type, msg: msg, status: status, data: data };
 }
 
-function getParams(url, queryName) {
-  let query = decodeURI(url.split('?')[1]);
-  let vars = query.split('&');
-  for (var i = 0; i < vars.length; i++) {
-    var pair = vars[i].split('=');
-    if (pair[0] === queryName) {
-      return pair[1];
-    }
-  }
-  return null;
-}
-
-async function getUserDetailByUid(userId, roomId) {
-  let res = JSON.stringify({ userId: userId, roomId: roomId });
-  console.log(res);
-  return res;
-}
-
 // 监听socket 信令服务器
 async function onListener(s) {
-  let url = s.client.request.url;
-  let userId = getParams(url, 'userId');
-  let roomId = getParams(url, 'roomId');
-  console.log('client uid：' + userId + ' roomId: ' + roomId + ' online ');
-  //user map
-  userMap.set(userId, s);
-  //room cache
+  let { userId, roomId, nickname } = s.handshake.query;
+  console.log('client uid：' + userId + ' roomId: ' + roomId + ' 加入 ');
+  userMap.set(userId, s); // TODO 缓存用户所有信息
   if (roomId) {
     let key = roomKey + roomId;
     if (!rooms.get(key)) {
@@ -51,8 +29,7 @@ async function onListener(s) {
     let users = rooms.get(key);
     users.add(userId);
     rooms.set(key, users);
-    // console.log(rooms);
-    oneToRoomMany(roomId, getMsg('join', userId + ' join then room', 200, userId));
+    oneToRoomMany(roomId, getMsg('join', userId + '加入房间', 200, userId));
   }
 
   s.on('msg', async (data) => {
@@ -61,7 +38,7 @@ async function onListener(s) {
   });
 
   s.on('disconnect', () => {
-    console.log('client uid：' + userId + ' roomId: ' + roomId + ' offline ');
+    console.log('uid：' + userId + ' roomId: ' + roomId + ' 离开 ');
     userMap.delete(userId);
     if (roomId) {
       let key = roomKey + roomId;
@@ -69,13 +46,13 @@ async function onListener(s) {
       let users = rooms.get(key);
       users.delete(userId);
       rooms.set(key, users);
-      oneToRoomMany(roomId, getMsg('leave', userId + ' leave the room ', 200, userId));
+      oneToRoomMany(roomId, getMsg('leave', userId + '离开房间', 200, userId));
     }
   });
 
   s.on('roomUserList', async (data) => {
-    // console.log("roomUserList msg",data)
-    s.emit('roomUserList', await getRoomUser(data['roomId']));
+    let userSet = await getRoomUser(data['roomId']);
+    s.emit('roomUserList', [...userSet]);
   });
   s.on('call', (data) => {
     let targetUid = data['targetUid'];
